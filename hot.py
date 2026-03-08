@@ -46,8 +46,8 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 from pathlib import Path
-portlab.lib.pagesizes import A4
-portlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
 from telegram import (
     InlineKeyboardButton,
