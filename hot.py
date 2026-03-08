@@ -1034,6 +1034,32 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     doc = update.message.document
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.effective_user
+
+    if user.id != ADMIN_ID:
+        return
+
+    if not context.user_data.get("await_qr_wallet"):
+        return
+
+    wallet_key = context.user_data.pop("await_qr_wallet")
+
+    db = load_db()
+    db.setdefault("payment_qr_file_ids", {})
+
+    photo = update.message.photo[-1]
+
+    db["payment_qr_file_ids"][wallet_key] = photo.file_id
+
+    save_db(db)
+
+    label = db["payment_wallets"][wallet_key]["label"]
+
+    await update.message.reply_text(
+        f"✅ QR saved for {label}"
+    )
 
     # 1) delivery file user ko bhejo
     await context.bot.send_document(
@@ -1146,19 +1172,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not is_admin(user.id):
-        return
-    if not context.user_data.get("await_qr_wallet"):
-        return
-
-    wallet_key = context.user_data.pop("await_qr_wallet")
-    db = load_db()
-    db.setdefault("payment_qr_file_ids", {})
-    photo = update.message.photo[-1]
-    db["payment_qr_file_ids"][wallet_key] = photo.file_id
-    save_db(db)
-
-    await update.message.reply_text("QR saved.")
