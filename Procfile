@@ -1,1 +1,1 @@
-worker: python hot.py
+worker: python main.py
