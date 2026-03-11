@@ -44,7 +44,7 @@ def tx_used(db, tx):
 
 
 def amount_match(value, amount):
-    return abs(float(value) - float(amount)) < 0.001
+    return abs(float(value) - float(amount)) < 0.00001
 
 
 def notify_admin(order):
@@ -56,7 +56,8 @@ def notify_admin(order):
         f"Order: {order['id']}\n"
         f"User: {order.get('name', '-')}\n"
         f"Quantity: {order.get('qty', '-')}\n"
-        f"Amount: {order['total_price']}$\n"
+        f"USD Amount: {order.get('total_price', '-')}$\n"
+        f"Pay Amount: {order.get('pay_amount', '-')}\n"
         f"Network: {order.get('wallet_label', '-')}\n\n"
         f"TXID:\n{order['txid']}"
     )
@@ -72,6 +73,60 @@ def notify_admin(order):
     except Exception:
         pass
 
+
+# =====================================
+# PRICE CONVERSION
+# =====================================
+
+def get_ltc_price_usd():
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd",
+            timeout=15
+        ).json()
+        return float(r["litecoin"]["usd"])
+    except Exception:
+        return None
+
+
+def get_bnb_price_usd():
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd",
+            timeout=15
+        ).json()
+        return float(r["binancecoin"]["usd"])
+    except Exception:
+        return None
+
+
+def get_coin_amount(wallet_key, usd_amount):
+    usd_amount = float(usd_amount)
+
+    # USDT networks
+    if wallet_key in ["wallet_2", "wallet_5"]:
+        return round(usd_amount, 6)
+
+    # LTC
+    if wallet_key == "wallet_3":
+        price = get_ltc_price_usd()
+        if not price:
+            return None
+        return round(usd_amount / price, 8)
+
+    # BNB
+    if wallet_key == "wallet_4":
+        price = get_bnb_price_usd()
+        if not price:
+            return None
+        return round(usd_amount / price, 8)
+
+    return None
+
+
+# =====================================
+# BLOCKCHAIN CHECK
+# =====================================
 
 def check_ltc(address, amount):
     url = f"https://sochain.com/api/v2/address/LTC/{address}"
@@ -180,7 +235,10 @@ def check_payment(order):
 
     wallet = order["wallet_key"]
     address = order["wallet_address"]
-    amount = order["total_price"]
+    amount = order.get("pay_amount")
+
+    if amount is None:
+        return False
 
     if wallet == "wallet_3":
         return check_ltc(address, amount)
@@ -205,6 +263,18 @@ def get_qr_path(wallet_key):
         "wallet_5": "photo5.jpg",
     }
     return mapping.get(wallet_key, "photo3.jpg")
+
+
+def get_pay_symbol(wallet_key):
+    if wallet_key == "wallet_2":
+        return "USDT"
+    if wallet_key == "wallet_3":
+        return "LTC"
+    if wallet_key == "wallet_4":
+        return "BNB"
+    if wallet_key == "wallet_5":
+        return "USDT"
+    return ""
 
 
 HTML = """
@@ -318,9 +388,10 @@ setInterval(refresh, 5000);
 
 <p>Type: {{order.mode}}</p>
 <p>Quantity: {{order.qty}} accounts</p>
-<p>Base Amount: {{order.base_total}}</p>
+<p>Base USD Amount: {{order.base_total}}</p>
 <p>Extra Added: {{order.markup_percent}}%</p>
-<p class="big">Final Exact Amount: {{order.total_price}}</p>
+<p class="big">Pay Amount: {{order.pay_amount}} {{pay_symbol}}</p>
+<p class="small">USD Value: {{order.total_price}}$</p>
 
 <p>Status: <b id="status">{{order.status}}</b></p>
 
@@ -445,9 +516,12 @@ def pay(order_id):
 
     wallet = db["payment_wallets"][wallet_key]
 
+    pay_amount = get_coin_amount(wallet_key, order["total_price"])
+
     order["wallet_key"] = wallet_key
     order["wallet_label"] = wallet["label"]
     order["wallet_address"] = wallet["address"]
+    order["pay_amount"] = pay_amount
 
     db["requests"][str(order_id)] = order
     save_db(db)
@@ -457,6 +531,7 @@ def pay(order_id):
         order=order,
         wallet=wallet,
         wallet_key=wallet_key,
+        pay_symbol=get_pay_symbol(wallet_key),
         time_left=time_left(order)
     )
 
