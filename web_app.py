@@ -1,4 +1,4 @@
-import json, os, requests
+import json, os, requests, time
 from datetime import datetime
 from flask import Flask, jsonify, render_template_string, request, send_file, abort
 
@@ -10,6 +10,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 ADMIN_ID = os.getenv("ADMIN_ID", "")
 
 app = Flask(__name__)
+
+PRICE_CACHE = {
+    "ltc": {"price": None, "ts": 0},
+    "bnb": {"price": None, "ts": 0},
+}
 
 
 def load_db():
@@ -56,7 +61,7 @@ def notify_admin(order):
         f"Order: {order['id']}\n"
         f"User: {order.get('name', '-')}\n"
         f"Quantity: {order.get('qty', '-')}\n"
-        f"USD Amount: {order.get('total_price', '-')}$\n"
+        f"USD Amount: {order.get('total_price', '-')} $\n"
         f"Pay Amount: {order.get('pay_amount', '-')}\n"
         f"Network: {order.get('wallet_label', '-')}\n\n"
         f"TXID:\n{order['txid']}"
@@ -75,29 +80,47 @@ def notify_admin(order):
 
 
 # =====================================
-# PRICE CONVERSION
+# PRICE CACHE (1 minute)
 # =====================================
 
 def get_ltc_price_usd():
+    now_ts = time.time()
+
+    if PRICE_CACHE["ltc"]["price"] is not None and now_ts - PRICE_CACHE["ltc"]["ts"] < 60:
+        return PRICE_CACHE["ltc"]["price"]
+
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd",
-            timeout=15
+            "https://api.binance.com/api/v3/ticker/price?symbol=LTCUSDT",
+            timeout=10
         ).json()
-        return float(r["litecoin"]["usd"])
+
+        price = float(r["price"])
+        PRICE_CACHE["ltc"]["price"] = price
+        PRICE_CACHE["ltc"]["ts"] = now_ts
+        return price
     except Exception:
-        return None
+        return PRICE_CACHE["ltc"]["price"]
 
 
 def get_bnb_price_usd():
+    now_ts = time.time()
+
+    if PRICE_CACHE["bnb"]["price"] is not None and now_ts - PRICE_CACHE["bnb"]["ts"] < 60:
+        return PRICE_CACHE["bnb"]["price"]
+
     try:
         r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd",
-            timeout=15
+            "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
+            timeout=10
         ).json()
-        return float(r["binancecoin"]["usd"])
+
+        price = float(r["price"])
+        PRICE_CACHE["bnb"]["price"] = price
+        PRICE_CACHE["bnb"]["ts"] = now_ts
+        return price
     except Exception:
-        return None
+        return PRICE_CACHE["bnb"]["price"]
 
 
 def get_coin_amount(wallet_key, usd_amount):
@@ -105,21 +128,21 @@ def get_coin_amount(wallet_key, usd_amount):
 
     # USDT networks
     if wallet_key in ["wallet_2", "wallet_5"]:
-        return round(usd_amount, 6)
+        return float(f"{usd_amount:.6f}")
 
     # LTC
     if wallet_key == "wallet_3":
         price = get_ltc_price_usd()
         if not price:
             return None
-        return round(usd_amount / price, 8)
+        return float(f"{usd_amount / price:.8f}")
 
     # BNB
     if wallet_key == "wallet_4":
         price = get_bnb_price_usd()
         if not price:
             return None
-        return round(usd_amount / price, 8)
+        return float(f"{usd_amount / price:.8f}")
 
     return None
 
@@ -370,11 +393,11 @@ async function completePayment(){
 
   if(d.status === "paid"){
     document.getElementById("paidBox").style.display = "block";
-    alert("Payment detected ✅");
+    alert("Payment Completed ✅");
   }else if(d.status === "expired"){
     alert("Order expired");
   }else{
-    alert("Payment not detected yet. Please wait for blockchain confirmation.");
+    alert("Payment not Completed yet. Please wait for blockchain confirmation.");
   }
 }
 
@@ -405,7 +428,7 @@ If you send less, payment will not be accepted.
 </div>
 
 <div id="paidBox" class="ok">
-Payment detected successfully ✅
+Payment Completed successfully ✅
 </div>
 
 <h3>Select Wallet</h3>
@@ -516,7 +539,14 @@ def pay(order_id):
 
     wallet = db["payment_wallets"][wallet_key]
 
-    pay_amount = get_coin_amount(wallet_key, order["total_price"])
+    if "locked_amounts" not in order:
+        order["locked_amounts"] = {}
+
+    if wallet_key not in order["locked_amounts"]:
+        pay_amount = get_coin_amount(wallet_key, order["total_price"])
+        order["locked_amounts"][wallet_key] = pay_amount
+    else:
+        pay_amount = order["locked_amounts"][wallet_key]
 
     order["wallet_key"] = wallet_key
     order["wallet_label"] = wallet["label"]
@@ -599,4 +629,4 @@ def start_web():
     app.run(
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8080"))
-    )
+)
