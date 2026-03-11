@@ -1,6 +1,6 @@
 import json, os, requests
 from datetime import datetime
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request, send_file, abort
 
 DB_FILE = "store_db.json"
 
@@ -51,28 +51,22 @@ def notify_admin(order):
     if not BOT_TOKEN or not ADMIN_ID:
         return
 
-    msg = f"""
-💰 PAYMENT RECEIVED
-
-Order: {order['id']}
-User: {order.get('name', '-')}
-
-Quantity: {order.get('qty', '-')}
-Amount: {order['total_price']}$
-
-TXID:
-{order['txid']}
-"""
+    msg = (
+        "💰 PAYMENT RECEIVED\n\n"
+        f"Order: {order['id']}\n"
+        f"User: {order.get('name', '-')}\n"
+        f"Quantity: {order.get('qty', '-')}\n"
+        f"Amount: {order['total_price']}$\n"
+        f"Network: {order.get('wallet_label', '-')}\n\n"
+        f"TXID:\n{order['txid']}"
+    )
 
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     try:
         requests.post(
             url,
-            json={
-                "chat_id": ADMIN_ID,
-                "text": msg
-            },
+            json={"chat_id": ADMIN_ID, "text": msg},
             timeout=15
         )
     except Exception:
@@ -203,6 +197,16 @@ def check_payment(order):
     return False
 
 
+def get_qr_path(wallet_key):
+    mapping = {
+        "wallet_2": "photo2.jpg",
+        "wallet_3": "photo3.jpg",
+        "wallet_4": "photo4.jpg",
+        "wallet_5": "photo5.jpg",
+    }
+    return mapping.get(wallet_key, "photo3.jpg")
+
+
 HTML = """
 <!doctype html>
 <html>
@@ -210,12 +214,20 @@ HTML = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Payment</title>
 <style>
-body{font-family:Arial;padding:20px;max-width:520px;margin:auto;background:#f7f7f7}
-.card{background:#fff;padding:16px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+body{font-family:Arial;padding:20px;max-width:560px;margin:auto;background:#f7f7f7}
+.card{background:#fff;padding:18px;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.08)}
 .big{font-size:24px;font-weight:bold;margin:8px 0}
-.mono{font-family:monospace;word-break:break-all;background:#f1f1f1;padding:10px;border-radius:8px}
-.warn{background:#fff3cd;padding:10px;border-radius:8px;margin:10px 0}
+.mono{font-family:monospace;word-break:break-all;background:#f1f1f1;padding:12px;border-radius:8px}
+.warn{background:#fff3cd;padding:12px;border-radius:10px;margin:12px 0}
 .small{color:#666;font-size:14px}
+.btns{display:grid;gap:10px;margin:14px 0}
+.btns a, .action-btn{display:block;text-decoration:none;padding:12px;border-radius:10px;background:#111;color:#fff;text-align:center;border:none;font-size:15px;cursor:pointer}
+.wallet-grid{display:grid;gap:10px;margin:12px 0}
+.wallet-grid a{text-decoration:none;padding:12px;border-radius:10px;background:#e9ecef;color:#111;text-align:center;font-weight:bold}
+.wallet-grid a.active{background:#111;color:#fff}
+.qr-wrap{text-align:center;margin:18px 0}
+.qr-wrap img{max-width:260px;width:100%;border-radius:12px;border:1px solid #ddd;background:#fff}
+.ok{background:#d1e7dd;padding:12px;border-radius:10px;margin:12px 0;display:none}
 </style>
 <script>
 async function refresh(){
@@ -223,7 +235,38 @@ async function refresh(){
   let d = await r.json();
   document.getElementById("status").innerText = d.status;
   document.getElementById("timer").innerText = d.time_left;
+  if(d.status === "paid"){
+    document.getElementById("paidBox").style.display = "block";
+  }
 }
+
+function copyAddress(){
+  const text = document.getElementById("addr").innerText;
+  navigator.clipboard.writeText(text).then(()=>{
+    alert("Address copied");
+  });
+}
+
+async function completePayment(){
+  let r = await fetch("/api/complete-payment/{{order.id}}", {
+    method: "POST"
+  });
+
+  let d = await r.json();
+
+  document.getElementById("status").innerText = d.status;
+  document.getElementById("timer").innerText = d.time_left;
+
+  if(d.status === "paid"){
+    document.getElementById("paidBox").style.display = "block";
+    alert("Payment detected ✅");
+  }else if(d.status === "expired"){
+    alert("Order expired");
+  }else{
+    alert("Payment not detected yet. Please wait for blockchain confirmation.");
+  }
+}
+
 setInterval(refresh, 2000);
 </script>
 </head>
@@ -245,11 +288,33 @@ Send the exact amount only.<br>
 If you send less, payment will not be accepted.
 </div>
 
+<div id="paidBox" class="ok">
+Payment detected successfully ✅
+</div>
+
+<h3>Select Wallet</h3>
+<div class="wallet-grid">
+  <a class="{{ 'active' if wallet_key=='wallet_3' else '' }}" href="/pay/{{order.id}}?wallet=wallet_3">LTC</a>
+  <a class="{{ 'active' if wallet_key=='wallet_4' else '' }}" href="/pay/{{order.id}}?wallet=wallet_4">BNB</a>
+  <a class="{{ 'active' if wallet_key=='wallet_2' else '' }}" href="/pay/{{order.id}}?wallet=wallet_2">USDT TRC20</a>
+  <a class="{{ 'active' if wallet_key=='wallet_5' else '' }}" href="/pay/{{order.id}}?wallet=wallet_5">USDT BEP20</a>
+</div>
+
+<div class="qr-wrap">
+  <img src="/qr/{{wallet_key}}" alt="QR Code">
+</div>
+
+<div class="btns">
+  <a href="/qr/{{wallet_key}}?download=1">⬇️ Download QR</a>
+  <button class="action-btn" onclick="copyAddress()">📋 Copy Address</button>
+  <button class="action-btn" onclick="completePayment()">✅ COMPLETE PAYMENT</button>
+</div>
+
 <p>Network:</p>
 <pre>{{wallet.label}}</pre>
 
 <p>Address:</p>
-<pre class="mono">{{wallet.address}}</pre>
+<pre class="mono" id="addr">{{wallet.address}}</pre>
 </div>
 </body>
 </html>
@@ -261,6 +326,18 @@ def health():
     return {"ok": True}
 
 
+@app.get("/qr/<wallet_key>")
+def qr_image(wallet_key):
+    path = get_qr_path(wallet_key)
+    if not os.path.exists(path):
+        abort(404)
+
+    download = request.args.get("download")
+    if download == "1":
+        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+    return send_file(path)
+
+
 @app.get("/pay/<order_id>")
 def pay(order_id):
     db = load_db()
@@ -269,12 +346,14 @@ def pay(order_id):
     if not order:
         return "Order not found", 404
 
-    wallet_key = order.get("wallet_key")
+    wallet_key = request.args.get("wallet") or order.get("wallet_key") or "wallet_3"
     if wallet_key not in db["payment_wallets"]:
         wallet_key = "wallet_3"
-        order["wallet_key"] = wallet_key
 
     wallet = db["payment_wallets"][wallet_key]
+
+    order["wallet_key"] = wallet_key
+    order["wallet_label"] = wallet["label"]
     order["wallet_address"] = wallet["address"]
 
     db["requests"][str(order_id)] = order
@@ -284,6 +363,7 @@ def pay(order_id):
         HTML,
         order=order,
         wallet=wallet,
+        wallet_key=wallet_key,
         time_left=time_left(order)
     )
 
@@ -317,11 +397,38 @@ def status(order_id):
     })
 
 
+@app.post("/api/complete-payment/<order_id>")
+def complete_payment(order_id):
+    db = load_db()
+    order = db["requests"].get(str(order_id))
+
+    if not order:
+        return jsonify({"status": "not_found", "time_left": "-"})
+
+    if time_left(order) == "Expired" and order["status"] == "pending_payment":
+        order["status"] = "expired"
+        db["requests"][str(order_id)] = order
+        save_db(db)
+        return jsonify({"status": order["status"], "time_left": time_left(order)})
+
+    if order["status"] == "pending_payment":
+        tx = check_payment(order)
+
+        if tx and not tx_used(db, tx):
+            order["status"] = "paid"
+            order["txid"] = tx
+            db["requests"][str(order_id)] = order
+            save_db(db)
+            notify_admin(order)
+
+    return jsonify({
+        "status": order["status"],
+        "time_left": time_left(order)
+    })
+
+
 def start_web():
     app.run(
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8080"))
-    )
-
-
-
+)
