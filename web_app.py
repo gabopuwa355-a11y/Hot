@@ -259,11 +259,11 @@ async function completePayment(){
 
   if(d.status === "paid"){
     document.getElementById("paidBox").style.display = "block";
-    alert("Payment detected ✅");
+    alert("Payment Completed ✅");
   }else if(d.status === "expired"){
     alert("Order expired");
   }else{
-    alert("Payment not detected yet. Please wait for blockchain confirmation.");
+    alert("Payment not Completed yet. Please wait for blockchain confirmation.");
   }
 }
 
@@ -289,7 +289,7 @@ If you send less, payment will not be accepted.
 </div>
 
 <div id="paidBox" class="ok">
-Payment detected successfully ✅
+Payment Completed successfully ✅
 </div>
 
 <h3>Select Wallet</h3>
