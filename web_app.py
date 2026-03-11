@@ -62,7 +62,7 @@ def notify_admin(order):
         f"User: {order.get('name', '-')}\n"
         f"Quantity: {order.get('qty', '-')}\n"
         f"USD Amount: {order.get('total_price', '-')} $\n"
-        f"Pay Amount: {order.get('pay_amount', '-')}\n"
+        f"Pay Amount: {order.get('pay_amount_text', order.get('pay_amount', '-'))}\n"
         f"Network: {order.get('wallet_label', '-')}\n\n"
         f"TXID:\n{order['txid']}"
     )
@@ -80,7 +80,7 @@ def notify_admin(order):
 
 
 # =====================================
-# PRICE CACHE (1 minute)
+# PRICE CACHE (1 minute + fallback)
 # =====================================
 
 def get_ltc_price_usd():
@@ -94,8 +94,19 @@ def get_ltc_price_usd():
             "https://api.binance.com/api/v3/ticker/price?symbol=LTCUSDT",
             timeout=10
         ).json()
-
         price = float(r["price"])
+        PRICE_CACHE["ltc"]["price"] = price
+        PRICE_CACHE["ltc"]["ts"] = now_ts
+        return price
+    except Exception:
+        pass
+
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=litecoin&vs_currencies=usd",
+            timeout=10
+        ).json()
+        price = float(r["litecoin"]["usd"])
         PRICE_CACHE["ltc"]["price"] = price
         PRICE_CACHE["ltc"]["ts"] = now_ts
         return price
@@ -114,8 +125,19 @@ def get_bnb_price_usd():
             "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
             timeout=10
         ).json()
-
         price = float(r["price"])
+        PRICE_CACHE["bnb"]["price"] = price
+        PRICE_CACHE["bnb"]["ts"] = now_ts
+        return price
+    except Exception:
+        pass
+
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=binancecoin&vs_currencies=usd",
+            timeout=10
+        ).json()
+        price = float(r["binancecoin"]["usd"])
         PRICE_CACHE["bnb"]["price"] = price
         PRICE_CACHE["bnb"]["ts"] = now_ts
         return price
@@ -126,25 +148,25 @@ def get_bnb_price_usd():
 def get_coin_amount(wallet_key, usd_amount):
     usd_amount = float(usd_amount)
 
-    # USDT networks
     if wallet_key in ["wallet_2", "wallet_5"]:
-        return float(f"{usd_amount:.6f}")
+        value = float(f"{usd_amount:.6f}")
+        return value, f"{value:.6f}"
 
-    # LTC
     if wallet_key == "wallet_3":
         price = get_ltc_price_usd()
         if not price:
-            return None
-        return float(f"{usd_amount / price:.8f}")
+            return None, "Price unavailable"
+        value = float(f"{usd_amount / price:.8f}")
+        return value, f"{value:.8f}"
 
-    # BNB
     if wallet_key == "wallet_4":
         price = get_bnb_price_usd()
         if not price:
-            return None
-        return float(f"{usd_amount / price:.8f}")
+            return None, "Price unavailable"
+        value = float(f"{usd_amount / price:.8f}")
+        return value, f"{value:.8f}"
 
-    return None
+    return None, "Price unavailable"
 
 
 # =====================================
@@ -393,11 +415,11 @@ async function completePayment(){
 
   if(d.status === "paid"){
     document.getElementById("paidBox").style.display = "block";
-    alert("Payment Completed ✅");
+    alert("Payment detected ✅");
   }else if(d.status === "expired"){
     alert("Order expired");
   }else{
-    alert("Payment not Completed yet. Please wait for blockchain confirmation.");
+    alert("Payment not detected yet. Please wait for blockchain confirmation.");
   }
 }
 
@@ -413,7 +435,7 @@ setInterval(refresh, 5000);
 <p>Quantity: {{order.qty}} accounts</p>
 <p>Base USD Amount: {{order.base_total}}</p>
 <p>Extra Added: {{order.markup_percent}}%</p>
-<p class="big">Pay Amount: {{order.pay_amount}} {{pay_symbol}}</p>
+<p class="big">Pay Amount: {{order.pay_amount_text}} {{pay_symbol}}</p>
 <p class="small">USD Value: {{order.total_price}}$</p>
 
 <p>Status: <b id="status">{{order.status}}</b></p>
@@ -428,7 +450,7 @@ If you send less, payment will not be accepted.
 </div>
 
 <div id="paidBox" class="ok">
-Payment Completed successfully ✅
+Payment detected successfully ✅
 </div>
 
 <h3>Select Wallet</h3>
@@ -543,15 +565,20 @@ def pay(order_id):
         order["locked_amounts"] = {}
 
     if wallet_key not in order["locked_amounts"]:
-        pay_amount = get_coin_amount(wallet_key, order["total_price"])
-        order["locked_amounts"][wallet_key] = pay_amount
+        pay_amount, pay_amount_text = get_coin_amount(wallet_key, order["total_price"])
+        order["locked_amounts"][wallet_key] = {
+            "amount": pay_amount,
+            "text": pay_amount_text
+        }
     else:
-        pay_amount = order["locked_amounts"][wallet_key]
+        pay_amount = order["locked_amounts"][wallet_key].get("amount")
+        pay_amount_text = order["locked_amounts"][wallet_key].get("text")
 
     order["wallet_key"] = wallet_key
     order["wallet_label"] = wallet["label"]
     order["wallet_address"] = wallet["address"]
     order["pay_amount"] = pay_amount
+    order["pay_amount_text"] = pay_amount_text
 
     db["requests"][str(order_id)] = order
     save_db(db)
@@ -629,4 +656,4 @@ def start_web():
     app.run(
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8080"))
-)
+            )
