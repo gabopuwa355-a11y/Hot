@@ -116,7 +116,7 @@ def ensure_user(user):
 
 def user_menu():
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("BUY")], [KeyboardButton("HISTORY")]],
+        [[KeyboardButton("BUY ACCOUNTS")], [KeyboardButton("HISTORY")]],
         resize_keyboard=True
     )
 
@@ -161,7 +161,7 @@ def build_shop(mode="disable", qty=1):
             txt = f"✓ {txt} ✓"
         rows.append([InlineKeyboardButton(txt, callback_data=f"qty:{q}")])
 
-    rows.append([InlineKeyboardButton("💳 CREATE PAYMENT PAGE", callback_data="create_order")])
+    rows.append([InlineKeyboardButton("   💳 COMPLETE PAYMENT IN CRYPTO    ", callback_data="create_order")])
 
     return InlineKeyboardMarkup(rows)
 
@@ -362,7 +362,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
 
     if user.id != ADMIN_ID:
-        if text == "BUY":
+        if text == "BUY ACCOUNTS":
             context.user_data.setdefault("shop", {"mode": "disable", "qty": 1})
             await update.message.reply_text("Choose quantity:", reply_markup=build_shop())
             return
